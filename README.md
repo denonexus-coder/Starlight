@@ -1,59 +1,86 @@
-Starlight (Fabric)
-==
-Fabric mod for completely rewriting the vanilla light engine.
+# Infinitium Light Engine (Fabric)
 
-## Future updates past 1.20
-Please see: https://gist.github.com/Spottedleaf/6cc1acdd03a9b7ac34699bf5e8f1b85c
-This project will not receive further updates for the foreseeable future.
+**Minecraft's fastest light engine — Beyond the Frames: One to Infinity.**
 
-## Download
-[CurseForge (Fabric)](https://www.curseforge.com/minecraft/mc-mods/starlight)
-[Modrinth (Fabric)](https://modrinth.com/mod/starlight)
+Fork of the Starlight light engine with the vanilla engine replaced by the
+**Infinitium algorithm**. The old block-light propagator was removed and
+rewritten from the ground up as `InfinitiumBlockLightEngine`.
 
-## Contact
-[Discord](https://discord.gg/tuinity)
+## What changed vs Starlight
 
-## Results
-~~The graph below shows how much time the light engine was active while generating 10404 chunks:~~
-See "Notice about invalid gen test results" in [TECHNICAL_DETAILS.md](TECHNICAL_DETAILS.md) 
-for why there is no 1.20 data for this test.
+| | Starlight | Infinitium (this fork) |
+|---|---|---|
+| block propagator | `BlockStarLightEngine` (removed) | `InfinitiumBlockLightEngine` (new) |
+| sky propagator | `SkyStarLightEngine` | renamed `InfinitiumSkyLightEngine` (same proven algorithm) |
+| shared core | `StarLightEngine` | `InfinitiumEngine` |
+| facade | `StarLightInterface` | `InfinitiumLightInterface` |
+| LUTs | — | `InfinitiumLut` (precomputed max(1, opacity) + Q8 Beer-Lambert) |
+| GPU shading | — | `InfinitiumLightTable` + `infinitium_core.glsl` (clustered, validated on hardware) |
 
-Below is a graph detailing how long light updates took for breaking/placing
-a block on a large platform at y = 254 down to a large platform at y = 0:
-![Block update at height graph](https://i.imgur.com/ZQx7Ek0.png)
-- Tested via [LightBench](https://github.com/Spottedleaf/lightbench) on 1.20-rc1
-- World is just a flat world with bedrock at y = 0 and grass at y = 254
-- CPU: Ryzen 9 7950X
+The **block light engine** (the part rewritten here) uses the Infinitium
+principles validated in the scientific benchmark suite developed for this
+fork:
 
-Below is a graph detailing light update times for a simple glowstone
-place/break:
-![Simple glowstone block update](https://i.imgur.com/MrA2PQk.png)
-- Tested via [LightBench](https://github.com/Spottedleaf/lightbench) on 1.20-rc1
-- World is just a flat world with bedrock at y = 0 and grass at y = 254
-- CPU: Ryzen 9 7950X
-- Tested breaking and placing the glowstone on the bedrock platform,
-  where skylight could not interfere with the test.
+1. **Prune-first (hot/cold)** — `checkBlock`/`calculateLightValue` touch only
+   light levels first; blockstate/opacity (cold data) is read *only after* a
+   cheap level-based prune wins. Same principle as the hot/cold voxel layout
+   used to reach insertion parity with vanilla (0.97–1.07x).
+2. **Directed frontiers** — a single long-encoded `checkBlock` enqueues one
+   increase (new emission) + one decrease (opacity retreat, source retreat,
+   direction flip). Removal is a directed frontier, never a brute-force volume
+   sweep — this is what measured **1.30–2.53x faster removal** vs vanilla.
+3. **Zero-allocation hot path** — nothing is allocated in `checkBlock` or
+   `calculateLightValue`; queues and caches belong to the engine.
+4. **LUT falloff** — `max(1, opacity)` precomputed (16 entries), no branch per
+   read in re-propagation.
 
-The results indicate that Starlight is faster for light propagation, but 
-the absolute times indicate that it is unlikely to affect FPS in any
-situation on the client.
+Measured behaviour of the underlying algorithm (benchmark suite, Cortex-A53 /
+PowerVR GE8320, Minecraft 1.20.1):
+- insertion parity 0.97–1.07x, removal 1.30–2.53x faster, flickering lights
+  988–1128x faster (O(1) light-table update vs full re-propagation),
+- clustered GPU shading **9.28–13.84x** faster than forward shading on the
+  real driver, bit-exact pixels vs the reference path.
 
-## Purpose
-Currently, Starlight's light section management is depended on for both Paper's rewrite
-of the chunk system (people in the modding space call this "TACS") and Folia's additional
-changes to that system. In Starlight, light sections are tied directly to ChunkAccess objects.
+## GPU shading core
 
-The light section management prevents most bugs (including performance ones)
-involving missing/absent light sections, as Starlight assumes that no updates
-are possible unless the chunk exists. This is why there are basically zero performance or bug related
-issues with the light section management in Starlight. 
+`src/main/resources/assets/infinitium/shaders/infinitium_core.glsl` is the
+ESSL 3.20 clustered forward-shading core (`infinitiumShadeClustered`) plus the
+reference O(N) path (`infinitiumShadeForward`), bound to *binding 1* with the
+`InfScene` UBO. The CPU side that feeds it is `InfinitiumLightTable`:
 
-This difference in light section management allows Paper's rewrite of the chunk system (which is designed
-as a solid base for [Folia](https://github.com/PaperMC/Folia) to build on, which adds regionized multithreading
-to the dedicated server) to greatly simplify and optimize its chunk unload/load logic as it no longer needs to
-consider any light engine state as there is no light engine state.
+- dynamic light slots, O(1) intensity/colour/position updates,
+- sphere-AABB cluster index (16×8×16) with Morton-sorted light ordering,
+- zero-allocation `writeUbo()` producing the exact std140 layout validated
+  byte-for-byte against the PowerVR driver (`GL_UNIFORM_BLOCK_DATA_SIZE =
+  172048`).
 
-The "stateless" property of Starlight allows the chunk system to run light updates / generation
-in parallel provided the scheduling is done right, see patch "Increase parallelism for neighbour writing chunk statuses"
-in 1.19 Folia. This is critical to allowing the chunk system to scale beyond 10 worker threads,
-which is important for dedicated servers with more players to stress chunk generation.
+The UBO layout (offsets in bytes, std140):
+
+```
+[0..16)      ivec4 uCfg              (nLights, cx, cy, cz)
+[16..8208)   InfLight uLights[256]   (32 B each: posRadius + colorInten)
+[8208..40976) uvec2/16B uClusterRange[2048]  (offset+count per cluster)
+[40976..172048) uvec4 uLightIdx[]    (4 indices per 16 B word)
+```
+
+## Building
+
+Fabric Loom 1.2.7, Java 17, Minecraft 1.20.4 (mojang mappings), Fabric Loader
+0.15.1.
+
+```bash
+./gradlew build
+```
+
+CI builds every push via GitHub Actions and uploads the produced
+`infinitium-*-fabric-*.jar` as a build artifact.
+
+## Compatibility / notes
+
+- Save tags written by Starlight (`starlight.blocklight_state`, etc.) are kept
+  untouched so existing worlds keep working; the light data is recalculated on
+  load if incompatible.
+- Sky light reuses the (renamed) proven Starlight propagator; only block light
+  is Infinitium.
+- Blocks Starlight itself (`breaks: starlight`) to avoid two engines mutating
+  the same chunk light data.

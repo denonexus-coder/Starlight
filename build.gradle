@@ -55,7 +55,7 @@ tasks.withType(JavaCompile) {
 }
 
 loom {
-    accessWidenerPath = file("src/main/resources/starlight.accesswidener")
+    accessWidenerPath = file("src/main/resources/infinitium.accesswidener")
 }
 
 // Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
