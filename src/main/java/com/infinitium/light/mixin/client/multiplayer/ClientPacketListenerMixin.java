@@ -90,7 +90,7 @@ public abstract class ClientPacketListenerMixin implements ClientGamePacketListe
             )
     )
     private void unloadLightDataHook(final ClientPacketListener instance, final ClientboundForgetLevelChunkPacket clientboundForgetLevelChunkPacket) {
-        ((InfinitiumLightingProvider)this.level.getChunkSource().getLightEngine()).clientRemoveLightData(new ChunkPos(clientboundForgetLevelChunkPacket.pos().x, clientboundForgetLevelChunkPacket.pos().z));
+        ((InfinitiumLightingProvider)this.level.getChunkSource().getLightEngine()).clientRemoveLightData(new ChunkPos(clientboundForgetLevelChunkPacket.getX(), clientboundForgetLevelChunkPacket.getZ()));
     }
 
     /**

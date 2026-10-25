@@ -18,6 +18,6 @@ public abstract class LevelMixin implements LevelAccessor, AutoCloseable, Extend
 
     @Override
     public ChunkAccess getAnyChunkImmediately(final int chunkX, final int chunkZ) {
-        return this.getChunkSource().getChunk(chunkX, chunkX, ChunkStatus.EMPTY, false);
+        return this.getChunkSource().getChunk(chunkX, chunkZ, ChunkStatus.EMPTY, false);
     }
 }

@@ -65,8 +65,8 @@ The UBO layout (offsets in bytes, std140):
 
 ## Building
 
-Fabric Loom 1.2.7, Java 17, Minecraft 1.20.4 (mojang mappings), Fabric Loader
-0.15.1.
+Fabric Loom 1.2.7, Java 17, Minecraft 1.20.1 (mojang mappings), Fabric Loader
+0.15.11.
 
 ```bash
 ./gradlew build
