@@ -371,6 +371,28 @@ public final class SWMRNibbleArray {
         }
     }
 
+    /**
+     * Zero-copy view for read-only consumers (Sodium/Flywheel).
+     * <p>
+     * The visible array is swapped on update, never mutated in place, so the
+     * returned {@link DataLayer} is a stable snapshot. Do not write through it.
+     */
+    public DataLayer toVanillaNibbleView() {
+        synchronized (this) {
+            switch (this.stateVisible) {
+                case INIT_STATE_HIDDEN:
+                case INIT_STATE_NULL:
+                    return null;
+                case INIT_STATE_UNINIT:
+                    return new DataLayer();
+                case INIT_STATE_INIT:
+                    return new DataLayer(this.storageVisible);
+                default:
+                    throw new IllegalStateException();
+            }
+        }
+    }
+
     /* x | (z << 4) | (y << 8) */
 
     // operation type: updating

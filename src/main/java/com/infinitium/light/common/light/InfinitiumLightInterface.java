@@ -121,7 +121,7 @@ public final class InfinitiumLightInterface {
                     return null;
                 }
 
-                return ((ExtendedChunk)chunk).getSkyNibbles()[sectionY - InfinitiumLightInterface.this.minLightSection].toVanillaNibble();
+                return ((ExtendedChunk)chunk).getSkyNibbles()[sectionY - InfinitiumLightInterface.this.minLightSection].toVanillaNibbleView();
             }
 
             @Override
@@ -169,7 +169,7 @@ public final class InfinitiumLightInterface {
                     return null;
                 }
 
-                return ((ExtendedChunk)chunk).getBlockNibbles()[pos.getY() - InfinitiumLightInterface.this.minLightSection].toVanillaNibble();
+                return ((ExtendedChunk)chunk).getBlockNibbles()[pos.getY() - InfinitiumLightInterface.this.minLightSection].toVanillaNibbleView();
             }
 
             @Override
