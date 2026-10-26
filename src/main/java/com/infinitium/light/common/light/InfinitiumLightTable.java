@@ -53,11 +53,23 @@ public final class InfinitiumLightTable {
     private final boolean[] used;
     private int lightCount;
 
+    // ---- free-list O(1) (muitas luzes = add/remove sem varrer 256 slots) ---
+    // v2.2: addLight/removeLight em O(1). A versao anterior fazia uma varredura
+    // linear O(MAX_LIGHTS) por add; com dezenas de luzes aparecendo/sumindo por
+    // frame (cenas lotadas) isso virava um pico de CPU constante. A pilha de
+    // slots livres remove a varredura mantendo a mesma politica "menor slot
+    // livre primeiro" (empilhada em ordem decrescente).
+    private final int[] freeSlots;
+    private int freeTop;
+
     // ---- scratch do indice de clusters (reutilizado, zero-alloc) -----------
     private final long[] mortonScratch; // chave << 8 | slot
     private final int[] rangeOff;
     private final int[] rangeCnt;
     private final int[] indexScratch;
+    // quantos slots de indice foram realmente escritos no ultimo rebuild — o
+    // UBO so faz upload ate aqui (nao 32768 fixos por frame).
+    private int idxUsed;
 
     // ---- buffer de saida (upload direto ao GL pelo chamador) ---------------
     private final ByteBuffer ubo;
@@ -65,11 +77,22 @@ public final class InfinitiumLightTable {
     public InfinitiumLightTable() {
         this.lightData = new float[MAX_LIGHTS * STRIDE];
         this.used = new boolean[MAX_LIGHTS];
+        this.freeSlots = new int[MAX_LIGHTS];
         this.mortonScratch = new long[MAX_LIGHTS];
         this.rangeOff = new int[CLUSTERS];
         this.rangeCnt = new int[CLUSTERS];
         this.indexScratch = new int[MAX_INDEX_SLOTS];
         this.ubo = ByteBuffer.allocateDirect(UBO_SIZE).order(ByteOrder.nativeOrder());
+        this.resetFreeList();
+    }
+
+    // Reempilha todos os slots livres em ordem decrescente: o pop devolve
+    // 0, 1, 2, ... preservando a politica "menor slot primeiro" da versao antiga.
+    private void resetFreeList() {
+        for (int i = 0; i < MAX_LIGHTS; ++i) {
+            this.freeSlots[i] = MAX_LIGHTS - 1 - i;
+        }
+        this.freeTop = MAX_LIGHTS;
     }
 
     // ---------------------------------------------------------------------
@@ -78,15 +101,14 @@ public final class InfinitiumLightTable {
     // ---------------------------------------------------------------------
 
     public int addLight(float x, float y, float z, float radius, float r, float g, float b, float intensity) {
-        for (int slot = 0; slot < MAX_LIGHTS; ++slot) {
-            if (!this.used[slot]) {
-                this.setLight(slot, x, y, z, radius, r, g, b, intensity);
-                this.used[slot] = true;
-                ++this.lightCount;
-                return slot;
-            }
+        if (this.freeTop == 0) {
+            return -1; // tabela cheia (256 luzes) — degrada com seguranca, nao estoura
         }
-        return -1;
+        final int slot = this.freeSlots[--this.freeTop];
+        this.setLight(slot, x, y, z, radius, r, g, b, intensity);
+        this.used[slot] = true;
+        ++this.lightCount;
+        return slot;
     }
 
     public void setLight(int slot, float x, float y, float z, float radius, float r, float g, float b, float intensity) {
@@ -122,6 +144,7 @@ public final class InfinitiumLightTable {
     public void removeLight(int slot) {
         if (this.used[slot]) {
             this.used[slot] = false;
+            this.freeSlots[this.freeTop++] = slot; // devolve o slot em O(1)
             --this.lightCount;
         }
     }
@@ -129,6 +152,7 @@ public final class InfinitiumLightTable {
     public void clear() {
         java.util.Arrays.fill(this.used, false);
         this.lightCount = 0;
+        this.resetFreeList();
     }
 
     public int lightCount() {
@@ -218,6 +242,15 @@ public final class InfinitiumLightTable {
                         final float cx1 = cx0 + cw;
                         final float dx = Math.max(0.f, Math.max(cx0 - px, px - cx1));
                         if (dx * dx + dy * dy + dz * dz < r2) {
+                            // guarda de saturacao: com muitas luzes de raio grande
+                            // sobrepostas a lista de indices pode encher. Em vez de
+                            // estourar o array (crash = instabilidade maxima), paramos
+                            // de indexar este par luz/cluster. Nao incrementamos o
+                            // contador do cluster, entao o shader nunca le um indice
+                            // que nao foi escrito (degradacao segura, nao corrupcao).
+                            if (idx >= MAX_INDEX_SLOTS) {
+                                continue;
+                            }
                             final int cluster = (y * CLUSTER_Z + z) * CLUSTER_X + x;
                             if (this.rangeCnt[cluster] == 0) {
                                 this.rangeOff[cluster] = idx;
@@ -229,62 +262,95 @@ public final class InfinitiumLightTable {
                 }
             }
         }
+        this.idxUsed = idx;
     }
 
     // ---------------------------------------------------------------------
     // writeUbo — escreve o buffer completo (layouts flat, sem iteracao por luz).
     // Chama rebuildRangeAndIndex uma vez e copia os blocos lineares.
+    //
+    // v2.2 — duas correcoes para "muitas luzes, estavel, sem lag":
+    //
+    //  (A) FIX DE ENDERECAMENTO: a versao anterior escrevia as luzes COMPACTADAS
+    //      (so as usadas, em sequencia 0..n-1), mas o indice de clusters guarda o
+    //      SLOT BRUTO (0..255) e o shader faz uLights[slot]. Quando uma luz era
+    //      removida no meio (slot vira buraco) e outra entrava, o indice passava
+    //      a apontar para a luz ERRADA — justamente em cenas dinamicas de muitas
+    //      luzes (tochas quebradas, luzes piscando/sumindo). Agora as luzes sao
+    //      escritas na POSICAO FIXA do slot; buracos ficam zerados (intensidade 0
+    //      -> contribuicao 0 no caminho forward; nunca referenciados no clustered,
+    //      pois o rebuild so emite slots usados). uCfg.x = watermark (maior slot
+    //      usado + 1), que e o alcance que o caminho forward precisa varrer.
+    //
+    //  (B) UPLOAD PROPORCIONAL: a versao anterior escrevia sempre os 32768 ints
+    //      de indice (128 KB) por frame, mesmo com 10 luzes. Agora so escrevemos
+    //      ate idxUsed e o buffer e limitado a esse ponto — o custo por frame fica
+    //      proporcional as luzes presentes, nao a um maximo fixo. O lixo apos
+    //      idxUsed nunca e lido (os ranges dos clusters sao limitados a idxUsed).
     // ---------------------------------------------------------------------
     public ByteBuffer writeUbo() {
         this.ubo.clear();
         this.ubo.position(0);
 
-        int n = 0;
-        for (int slot = 0; slot < MAX_LIGHTS; ++slot) {
+        // watermark = maior slot usado + 1 (alcance do caminho forward de referencia)
+        int watermark = 0;
+        for (int slot = MAX_LIGHTS - 1; slot >= 0; --slot) {
             if (this.used[slot]) {
-                ++n;
+                watermark = slot + 1;
+                break;
             }
         }
 
-        // cfg: ivec4 { nLuzes, cx, cy, cz }
-        this.ubo.putInt(n);
+        // cfg: ivec4 { watermark, cx, cy, cz }
+        this.ubo.putInt(watermark);
         this.ubo.putInt(CLUSTER_X);
         this.ubo.putInt(CLUSTER_Y);
         this.ubo.putInt(CLUSTER_Z);
 
-        // configura o range/index primeiro (escreve em CIMA da memoria flat)
+        // configura o range/index primeiro (preenche idxUsed)
         this.rebuildRangeAndIndex();
 
-        // copy do bloco de luzes (apenas as usadas, na ordem flat)
-        for (int slot = 0; slot < MAX_LIGHTS; ++slot) {
-            if (!this.used[slot]) {
-                continue;
-            }
-            final int base = slot * STRIDE;
-            for (int i = 0; i < STRIDE; ++i) {
-                this.ubo.putFloat(this.lightData[base + i]);
+        // bloco de luzes em POSICAO FIXA de slot (buracos zerados) — o indice de
+        // clusters guarda slot bruto, entao uLights[slot] sempre casa.
+        this.ubo.position(OFF_LIGHTS);
+        for (int slot = 0; slot < watermark; ++slot) {
+            if (this.used[slot]) {
+                final int base = slot * STRIDE;
+                for (int i = 0; i < STRIDE; ++i) {
+                    this.ubo.putFloat(this.lightData[base + i]);
+                }
+            } else {
+                for (int i = 0; i < STRIDE; ++i) {
+                    this.ubo.putFloat(0.f); // intensidade 0 -> nao ilumina
+                }
             }
         }
 
-        // percorre os clusters e escreve range
+        // percorre os clusters e escreve range (off, cnt, pad, pad)
         this.ubo.position(OFF_RANGE);
         for (int c = 0; c < CLUSTERS; ++c) {
             this.ubo.putInt(this.rangeOff[c]);
             this.ubo.putInt(this.rangeCnt[c]);
-            // std140: uvec2 ocupa 16 bytes (8B), mais 8B de pad? nao.
-            // Aqui seguimos o harness: 4B off + 4B cnt por 16B = 8B de pad.
             this.ubo.putInt(0);
             this.ubo.putInt(0);
         }
 
-        // indices (lineares, 4 por uvec4)
+        // indices: apenas os usados (nao os 32768 fixos)
         this.ubo.position(OFF_IDX);
-        for (int i = 0; i < MAX_INDEX_SLOTS; ++i) {
+        for (int i = 0; i < this.idxUsed; ++i) {
             this.ubo.putInt(this.indexScratch[i]);
         }
 
+        // limita o buffer ao fim real dos indices, arredondado para uvec4 (16 B)
+        final int end = OFF_IDX + ((this.idxUsed + 3) / 4) * 16;
+        this.ubo.position(end);
         this.ubo.flip();
         return this.ubo;
+    }
+
+    /** Numero de slots de indice escritos no ultimo writeUbo (para upload parcial). */
+    public int usedIndexCount() {
+        return this.idxUsed;
     }
 
     public ByteBuffer uboBuffer() {
