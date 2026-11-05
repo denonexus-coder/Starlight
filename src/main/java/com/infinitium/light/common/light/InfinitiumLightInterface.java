@@ -1,6 +1,7 @@
 package com.infinitium.light.common.light;
 
 import com.infinitium.light.common.chunk.ExtendedChunk;
+import com.infinitium.light.common.light.UltraLightBlockLightEngine;
 import com.infinitium.light.common.util.CoordinateUtils;
 import com.infinitium.light.common.util.WorldUtil;
 import com.infinitium.light.common.world.ExtendedWorld;
@@ -39,7 +40,7 @@ public final class InfinitiumLightInterface {
     protected final LightChunkGetter lightAccess;
 
     protected final ArrayDeque<InfinitiumSkyLightEngine> cachedSkyPropagators;
-    protected final ArrayDeque<InfinitiumBlockLightEngine> cachedBlockPropagators;
+    protected final ArrayDeque<UltraLightBlockLightEngine> cachedBlockPropagators;
 
     protected final LightQueue lightQueue = new LightQueue(this);
 
@@ -352,22 +353,22 @@ public final class InfinitiumLightInterface {
         }
     }
 
-    protected final InfinitiumBlockLightEngine getBlockLightEngine() {
+    protected final UltraLightBlockLightEngine getBlockLightEngine() {
         if (this.cachedBlockPropagators == null) {
             return null;
         }
-        final InfinitiumBlockLightEngine ret;
+        final UltraLightBlockLightEngine ret;
         synchronized (this.cachedBlockPropagators) {
             ret = this.cachedBlockPropagators.pollFirst();
         }
 
         if (ret == null) {
-            return new InfinitiumBlockLightEngine(this.world);
+            return new UltraLightBlockLightEngine(this.world);
         }
         return ret;
     }
 
-    protected final void releaseBlockLightEngine(final InfinitiumBlockLightEngine engine) {
+    protected final void releaseBlockLightEngine(final UltraLightBlockLightEngine engine) {
         if (this.cachedBlockPropagators == null) {
             return;
         }
@@ -394,7 +395,7 @@ public final class InfinitiumLightInterface {
 
     public void forceLoadInChunk(final ChunkAccess chunk, final Boolean[] emptySections) {
         final InfinitiumSkyLightEngine skyEngine = this.getSkyLightEngine();
-        final InfinitiumBlockLightEngine blockEngine = this.getBlockLightEngine();
+        final UltraLightBlockLightEngine blockEngine = this.getBlockLightEngine();
 
         try {
             if (skyEngine != null) {
@@ -411,7 +412,7 @@ public final class InfinitiumLightInterface {
 
     public void loadInChunk(final int chunkX, final int chunkZ, final Boolean[] emptySections) {
         final InfinitiumSkyLightEngine skyEngine = this.getSkyLightEngine();
-        final InfinitiumBlockLightEngine blockEngine = this.getBlockLightEngine();
+        final UltraLightBlockLightEngine blockEngine = this.getBlockLightEngine();
 
         try {
             if (skyEngine != null) {
@@ -428,7 +429,7 @@ public final class InfinitiumLightInterface {
 
     public void lightChunk(final ChunkAccess chunk, final Boolean[] emptySections) {
         final InfinitiumSkyLightEngine skyEngine = this.getSkyLightEngine();
-        final InfinitiumBlockLightEngine blockEngine = this.getBlockLightEngine();
+        final UltraLightBlockLightEngine blockEngine = this.getBlockLightEngine();
 
         try {
             if (skyEngine != null) {
@@ -446,7 +447,7 @@ public final class InfinitiumLightInterface {
     public void relightChunks(final Set<ChunkPos> chunks, final Consumer<ChunkPos> chunkLightCallback,
                               final IntConsumer onComplete) {
         final InfinitiumSkyLightEngine skyEngine = this.getSkyLightEngine();
-        final InfinitiumBlockLightEngine blockEngine = this.getBlockLightEngine();
+        final UltraLightBlockLightEngine blockEngine = this.getBlockLightEngine();
 
         try {
             if (skyEngine != null) {
@@ -480,7 +481,7 @@ public final class InfinitiumLightInterface {
     }
 
     public void checkBlockEdges(final int chunkX, final int chunkZ) {
-        final InfinitiumBlockLightEngine blockEngine = this.getBlockLightEngine();
+        final UltraLightBlockLightEngine blockEngine = this.getBlockLightEngine();
         try {
             if (blockEngine != null) {
                 blockEngine.checkChunkEdges(this.lightAccess, chunkX, chunkZ);
@@ -503,7 +504,7 @@ public final class InfinitiumLightInterface {
     }
 
     public void checkBlockEdges(final int chunkX, final int chunkZ, final ShortCollection sections) {
-        final InfinitiumBlockLightEngine blockEngine = this.getBlockLightEngine();
+        final UltraLightBlockLightEngine blockEngine = this.getBlockLightEngine();
         try {
             if (blockEngine != null) {
                 blockEngine.checkChunkEdges(this.lightAccess, chunkX, chunkZ, sections);
@@ -527,7 +528,7 @@ public final class InfinitiumLightInterface {
         }
 
         final InfinitiumSkyLightEngine skyEngine = this.getSkyLightEngine();
-        final InfinitiumBlockLightEngine blockEngine = this.getBlockLightEngine();
+        final UltraLightBlockLightEngine blockEngine = this.getBlockLightEngine();
 
         try {
             LightQueue.ChunkTasks task;
