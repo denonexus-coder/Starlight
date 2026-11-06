@@ -1,12 +1,14 @@
 package com.infinitium.light.common.light;
 
 import com.infinitium.light.common.blockstate.ExtendedAbstractBlockState;
+import com.infinitium.light.common.chunk.ExtendedChunk;
 import com.infinitium.light.common.util.WorldUtil;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.chunk.ChunkStatus;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.LightChunkGetter;
 import net.minecraft.world.phys.shapes.Shapes;
@@ -28,6 +30,11 @@ import java.util.Set;
 public final class UltraLightBlockLightEngine extends InfinitiumEngine {
 
     private final UltraLightEngineV4Java17 ultra;
+
+    // Mutable reutilizáveis no cálculo de opacidade (mesmo que InfinitiumBlockLightEngine,
+    // que é classe-irmã — estes campos não vêm de InfinitiumEngine).
+    protected final BlockPos.MutableBlockPos recalcCenterPos = new BlockPos.MutableBlockPos();
+    protected final BlockPos.MutableBlockPos recalcNeighbourPos = new BlockPos.MutableBlockPos();
 
     public UltraLightBlockLightEngine(final Level world) {
         super(false, world);
